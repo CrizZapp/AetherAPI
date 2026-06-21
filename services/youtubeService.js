@@ -1,13 +1,12 @@
 import yts from 'yt-search';
+import axios from 'axios';
 
 /**
  * Obtiene la información y el enlace de descarga de un audio de YouTube.
- * @param {string} urlOrQuery - Enlace o término de búsqueda de YouTube.
- * @returns {Promise<Object>} Objeto con el formato requerido por AetherAPI.
  */
 export const downloadYoutubeAudio = async (urlOrQuery) => {
     try {
-        // 1. Buscar el video en YouTube para extraer la metadata exacta
+        // 1. Buscar el video en YouTube
         const searchResult = await yts(urlOrQuery);
         const video = searchResult.videos[0];
         
@@ -15,11 +14,14 @@ export const downloadYoutubeAudio = async (urlOrQuery) => {
             throw new Error('No se encontró el contenido en YouTube.');
         }
 
-        // 2. Aquí irá la lógica de tu scraper activo para obtener el enlace directo del MP3
-        // Por ahora dejamos un placeholder funcional o mapeamos a tu pasarela externa
+        // 2. Ejecutar el extractor real para obtener el MP3
         const audioLinkDirecto = await extractMp3Link(video.url);
 
-        // 3. Retornar la estructura exacta que definiste
+        if (!audioLinkDirecto) {
+             throw new Error('No se pudo generar el enlace de descarga del audio.');
+        }
+
+        // 3. Retornar los datos limpios
         return {
             status: true,
             url: video.url,
@@ -38,9 +40,22 @@ export const downloadYoutubeAudio = async (urlOrQuery) => {
     }
 };
 
-// Función auxiliar para aislar tu scraper de turno
+// ==========================================
+// MOTOR DE EXTRACCIÓN REAL
+// ==========================================
 async function extractMp3Link(videoUrl) {
-    // Aquí puedes meter tu lógica de got-scraping, axios-cookiejar o una API externa estable.
-    // Ejemplo momentáneo devolviendo un string o pasarela:
-    return `https://tu-servidor-de-descargas.com/download?v=${encodeURIComponent(videoUrl)}`;
+    try {
+        // Utilizamos una pasarela pública externa rápida como motor interno para AetherAPI
+        const { data } = await axios.get(`https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(videoUrl)}`);
+        
+        // Verificamos si la pasarela nos devolvió el link de descarga (dl)
+        if (data && data.data && data.data.dl) {
+            return data.data.dl; 
+        }
+        
+        return null;
+    } catch (e) {
+        console.error('[EXTRACTOR ERROR]:', e.message);
+        return null; 
+    }
 }
