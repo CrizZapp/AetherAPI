@@ -1,68 +1,136 @@
 import axios from 'axios';
 import ytSearch from 'yt-search';
 
+// =======================
+// CACHE SIMPLE EN MEMORIA
+// =======================
+const cache = new Map();
+
+// =======================
+// HELPERS
+// =======================
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function normalizeVideo(video) {
+    return {
+        title: video.title,
+        url: video.url,
+        id: video.videoId,
+        author: video.author?.name || "Desconocido"
+    };
+}
+
+// =======================
+// PROVIDER 1 - COBALT
+// =======================
+async function cobalt(url) {
+    const res = await axios.post(
+        'https://api.cobalt.tools/api/json',
+        {
+            url,
+            isAudioOnly: true,
+            aFormat: 'mp3'
+        },
+        {
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://cobalt.tools',
+                'Referer': 'https://cobalt.tools/',
+                'User-Agent': 'Mozilla/5.0'
+            },
+            timeout: 12000
+        }
+    );
+
+    return res.data?.url || null;
+}
+
+// =======================
+// PROVIDER 2 - SIPUTZX
+// =======================
+async function siputzx(url) {
+    const endpoint = `https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(url)}`;
+    const res = await axios.get(endpoint, { timeout: 10000 });
+
+    return res.data?.data?.dl || null;
+}
+
+// =======================
+// MAIN FUNCTION
+// =======================
 export const downloadYoutubeAudio = async (query) => {
     try {
-        // 1. Conseguir el link del video (yt-search casi nunca falla)
-        const search = await ytSearch(query);
+
+        // =======================
+        // CACHE HIT
+        // =======================
+        if (cache.has(query)) {
+            return cache.get(query);
+        }
+
+        // =======================
+        // SEARCH SAFE
+        // =======================
+        const search = await ytSearch({ query, pages: 1 });
         const video = search.videos?.[0];
 
         if (!video) {
             return { status: false, message: "No se encontró el video en YouTube." };
         }
 
-        try {
-            // 2. Intentar con el Rey actual: API de Cobalt
-            const cobaltResponse = await axios.post('https://api.cobalt.tools/api/json', {
-                url: video.url,
-                isAudioOnly: true,
-                aFormat: 'mp3'
-            }, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'Origin': 'https://cobalt.tools',
-                    'Referer': 'https://cobalt.tools/',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                },
-                timeout: 10000 // Le damos 10 segs porque hace bypass de encriptación
-            });
+        const data = normalizeVideo(video);
 
-            if (cobaltResponse.data && cobaltResponse.data.url) {
-                return {
-                    status: true,
-                    title: video.title,
-                    audio: cobaltResponse.data.url,
-                    url: video.url
-                };
-            }
-        } catch (err) {
-            console.log("[AETHER] Cobalt falló o tardó demasiado, rotando al plan B...");
-        }
+        let audio = null;
 
-        // 3. Plan B: API de Siputzx (Muy usada y estable en la comunidad de bots)
+        // =======================
+        // PROVIDER CHAIN (CONTROLADO)
+        // =======================
+
         try {
-            const backupApi = `https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(video.url)}`;
-            const siputzxResponse = await axios.get(backupApi, { timeout: 8000 });
-            
-            // La API de Siputzx devuelve el enlace dentro de data.dl
-            if (siputzxResponse.data?.data?.dl) {
-                return {
-                    status: true,
-                    title: video.title,
-                    audio: siputzxResponse.data.data.dl,
-                    url: video.url
-                };
-            }
+            audio = await cobalt(data.url);
+            if (!audio) throw new Error("Cobalt vacío");
         } catch (e) {
-            console.log("[AETHER] El Plan B también rebotó...");
+            console.log("[AETHER] Cobalt falló → fallback...");
+            await sleep(500);
         }
 
-        // Si estamos aquí, Render y las APIs se rindieron
-        return { status: false, message: "Todas las rutas de extracción fallaron. Intenta con otra canción." };
+        if (!audio) {
+            try {
+                audio = await siputzx(data.url);
+            } catch (e) {
+                console.log("[AETHER] Siputzx falló...");
+            }
+        }
+
+        if (!audio) {
+            return {
+                status: false,
+                message: "Todas las rutas de extracción fallaron."
+            };
+        }
+
+        const result = {
+            status: true,
+            title: data.title,
+            audio,
+            url: data.url,
+            author: data.author
+        };
+
+        // =======================
+        // CACHE 10 MIN
+        // =======================
+        cache.set(query, result);
+        setTimeout(() => cache.delete(query), 10 * 60 * 1000);
+
+        return result;
 
     } catch (error) {
-        console.error("[AETHER ERROR CRÍTICO] -", error.message);
-        return { status: false, message: "Error interno del servidor procesando la solicitud." };
+        console.error("[AETHER ERROR]", error.message);
+        return {
+            status: false,
+            message: "Error interno del servidor."
+        };
     }
 };
