@@ -1,8 +1,8 @@
 import yts from 'yt-search';
-import axios from 'axios';
+import ytdl from '@distube/ytdl-core';
 
 /**
- * Obtiene la información y el enlace de descarga de un audio de YouTube.
+ * Obtiene la información y el enlace crudo de descarga de un audio de YouTube.
  */
 export const downloadYoutubeAudio = async (urlOrQuery) => {
     try {
@@ -14,18 +14,28 @@ export const downloadYoutubeAudio = async (urlOrQuery) => {
             throw new Error('No se encontró el contenido en YouTube.');
         }
 
-        // 2. Ejecutar el extractor real para obtener el MP3
-        const audioLinkDirecto = await extractMp3Link(video.url);
+        // 2. Extraer los datos crudos directo desde YouTube
+        // Usamos un agente falso para que YouTube no bloquee la petición tan rápido
+        const info = await ytdl.getInfo(video.url, {
+            requestOptions: {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+                }
+            }
+        });
 
-        if (!audioLinkDirecto) {
-             throw new Error('No se pudo generar el enlace de descarga del audio.');
+        // 3. Filtrar solo los formatos de audio y elegir el mejor (suele ser mp4a o webm)
+        const audioFormat = ytdl.chooseFormat(info.formats, { quality: 'highestaudio' });
+
+        if (!audioFormat || !audioFormat.url) {
+             throw new Error('YouTube no devolvió un formato de audio extraíble para este video.');
         }
 
-        // 3. Retornar los datos limpios
+        // 4. Retornar la estructura pura
         return {
             status: true,
             url: video.url,
-            audio: audioLinkDirecto,
+            audio: audioFormat.url, // <-- Este es el link directo a googlevideo.com
             title: video.title,
             creador: video.author.name,
             image: video.thumbnail || video.image
@@ -35,27 +45,7 @@ export const downloadYoutubeAudio = async (urlOrQuery) => {
         console.error('[YOUTUBE SERVICE ERROR]:', error.message);
         return {
             status: false,
-            message: error.message || 'Error interno al procesar el audio.'
+            message: error.message || 'Error interno al extraer la firma de YouTube.'
         };
     }
 };
-
-// ==========================================
-// MOTOR DE EXTRACCIÓN REAL
-// ==========================================
-async function extractMp3Link(videoUrl) {
-    try {
-        // Utilizamos una pasarela pública externa rápida como motor interno para AetherAPI
-        const { data } = await axios.get(`https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(videoUrl)}`);
-        
-        // Verificamos si la pasarela nos devolvió el link de descarga (dl)
-        if (data && data.data && data.data.dl) {
-            return data.data.dl; 
-        }
-        
-        return null;
-    } catch (e) {
-        console.error('[EXTRACTOR ERROR]:', e.message);
-        return null; 
-    }
-}
