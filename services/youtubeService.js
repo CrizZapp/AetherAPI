@@ -3,7 +3,7 @@ import ytSearch from 'yt-search';
 
 export const downloadYoutubeAudio = async (query) => {
     try {
-        // 1. Obtenemos el link súper rápido con yt-search (Cero bloqueos aquí)
+        // 1. Conseguir el link del video (yt-search casi nunca falla)
         const search = await ytSearch(query);
         const video = search.videos?.[0];
 
@@ -11,51 +11,58 @@ export const downloadYoutubeAudio = async (query) => {
             return { status: false, message: "No se encontró el video en YouTube." };
         }
 
-        const encodedUrl = encodeURIComponent(video.url);
-        
-        // 2. Pool de APIs públicas estables mantenidas por la comunidad de devs.
-        // Usan proxys residenciales internos, así Render jamás queda expuesto a YouTube.
-        const BOT_APIS = [
-            `https://api.ryzendesu.vip/api/downloader/ytmp3?url=${encodedUrl}`,
-            `https://api.vreden.my.id/api/ytmp3?url=${encodedUrl}`,
-            `https://aemt.me/download/ytdl?url=${encodedUrl}`
-        ];
+        try {
+            // 2. Intentar con el Rey actual: API de Cobalt
+            const cobaltResponse = await axios.post('https://api.cobalt.tools/api/json', {
+                url: video.url,
+                isAudioOnly: true,
+                aFormat: 'mp3'
+            }, {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://cobalt.tools',
+                    'Referer': 'https://cobalt.tools/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
+                timeout: 10000 // Le damos 10 segs porque hace bypass de encriptación
+            });
 
-        let audioUrl = null;
-
-        // 3. Sistema de rotación: si una API está saturada, salta a la siguiente al instante
-        for (const api of BOT_APIS) {
-            try {
-                // Timeout agresivo de 5 segundos. Si un nodo no responde rápido, pasamos al siguiente.
-                const { data } = await axios.get(api, { timeout: 5000 }); 
-                
-                // Extraemos la URL de descarga dependiendo de cómo estructure el JSON cada API
-                if (data?.url) audioUrl = data.url;
-                else if (data?.data?.url) audioUrl = data.data.url;
-                else if (data?.result?.download?.url) audioUrl = data.result.download.url;
-
-                if (audioUrl) break; // ¡Éxito! Rompemos el bucle y dejamos de buscar
-            } catch (err) {
-                console.log(`[AETHER] Nodo ocupado o inactivo, rotando al siguiente...`);
-                continue; 
+            if (cobaltResponse.data && cobaltResponse.data.url) {
+                return {
+                    status: true,
+                    title: video.title,
+                    audio: cobaltResponse.data.url,
+                    url: video.url
+                };
             }
+        } catch (err) {
+            console.log("[AETHER] Cobalt falló o tardó demasiado, rotando al plan B...");
         }
 
-        // Si pasamos por todas las APIs y ninguna funcionó
-        if (!audioUrl) {
-            return { status: false, message: "Todos los nodos de extracción están saturados en este momento. Intenta de nuevo." };
+        // 3. Plan B: API de Siputzx (Muy usada y estable en la comunidad de bots)
+        try {
+            const backupApi = `https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(video.url)}`;
+            const siputzxResponse = await axios.get(backupApi, { timeout: 8000 });
+            
+            // La API de Siputzx devuelve el enlace dentro de data.dl
+            if (siputzxResponse.data?.data?.dl) {
+                return {
+                    status: true,
+                    title: video.title,
+                    audio: siputzxResponse.data.data.dl,
+                    url: video.url
+                };
+            }
+        } catch (e) {
+            console.log("[AETHER] El Plan B también rebotó...");
         }
 
-        // 4. Devolver la respuesta impecable
-        return {
-            status: true,
-            title: video.title,
-            audio: audioUrl,
-            url: video.url
-        };
+        // Si estamos aquí, Render y las APIs se rindieron
+        return { status: false, message: "Todas las rutas de extracción fallaron. Intenta con otra canción." };
 
     } catch (error) {
-        console.error("[AETHER ERROR] -", error.message);
-        return { status: false, message: "Error interno procesando la solicitud." };
+        console.error("[AETHER ERROR CRÍTICO] -", error.message);
+        return { status: false, message: "Error interno del servidor procesando la solicitud." };
     }
 };
